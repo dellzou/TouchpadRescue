@@ -49,6 +49,11 @@ SW_HIDE = 0
 SW_SHOWNOACTIVATE = 4
 SW_SHOW = 5
 
+SWP_NOSIZE = 0x0001
+SWP_NOZORDER = 0x0004
+SWP_NOREDRAW = 0x0008
+SWP_NOACTIVATE = 0x0010
+
 VK_ESCAPE = 0x1B
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
@@ -217,6 +222,11 @@ user32.DestroyMenu.argtypes = [wintypes.HMENU]
 user32.SetForegroundWindow.argtypes = [wintypes.HWND]
 user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
 user32.SetCursor.argtypes = [wintypes.HANDLE]
+user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int,
+                                ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                wintypes.UINT]
+user32.SetWindowPos.restype = wintypes.BOOL
+user32.GetCursorPos.restype = wintypes.BOOL
 user32.LoadImageW.restype = wintypes.HANDLE
 user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
                               ctypes.c_int, ctypes.c_int, wintypes.UINT]
@@ -325,6 +335,20 @@ class LayeredWindow:
                 return 0
 
         if msg == WM_MOUSEMOVE:
+            # 拖动中：必须用「屏幕绝对坐标」算位移。
+            # WM_MOUSEMOVE 的 lparam 是相对窗口客户区的，窗口一移动原点就跟着变，
+            # 用它算 delta 会形成正反馈 —— 窗口抖成筛子。
+            if self._drag_origin:
+                pt = wintypes.POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                sx0, sy0, wx, wy = self._drag_origin
+                dx, dy = pt.x - sx0, pt.y - sy0
+                if not self._drag_moved and (abs(dx) > 3 or abs(dy) > 3):
+                    self._drag_moved = True
+                if self._drag_moved:
+                    self._move_to(wx + dx, wy + dy)
+                return 0
+
             if not self._tracking:
                 tme = TRACKMOUSEEVENT()
                 tme.cbSize = ctypes.sizeof(tme)
@@ -334,21 +358,6 @@ class LayeredWindow:
                 self._tracking = True
             x = ctypes.c_short(lparam & 0xFFFF).value / self.scale
             y = ctypes.c_short((lparam >> 16) & 0xFFFF).value / self.scale
-
-            # 按住空白处拖动窗口
-            if self._drag_origin and (wparam & 0x0001):  # MK_LBUTTON
-                ox, oy, wx, wy = self._drag_origin
-                dx, dy = x - ox, y - oy
-                if abs(dx) > 3 or abs(dy) > 3:
-                    self._drag_moved = True
-                if self._drag_moved:
-                    nx = int(wx + dx * self.scale)
-                    ny = int(wy + dy * self.scale)
-                    self._x, self._y = nx, ny
-                    img = self._last_img
-                    if img is not None:
-                        self.present(img, nx, ny)
-                return 0
 
             hv = self.hit_test(x, y)
             if hv != self._hover:
@@ -360,13 +369,18 @@ class LayeredWindow:
             x = ctypes.c_short(lparam & 0xFFFF).value / self.scale
             y = ctypes.c_short((lparam >> 16) & 0xFFFF).value / self.scale
             if self.draggable and not self.hit_test(x, y):
-                self._drag_origin = (x, y, self._x, self._y)
+                pt = wintypes.POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                # 记的是屏幕坐标 + 窗口当时的左上角
+                self._drag_origin = (pt.x, pt.y, self._x, self._y)
                 self._drag_moved = False
                 user32.SetCapture(hwnd)
             return 0
 
         if msg == WM_MOUSELEAVE:
             self._tracking = False
+            if self._drag_origin:
+                return 0      # 拖动中窗口在动，别重绘，否则和拖动互相拉扯
             if self._hover:
                 self._hover = ""
                 self.repaint()
@@ -375,16 +389,19 @@ class LayeredWindow:
         if msg == WM_LBUTTONUP:
             if self._drag_origin:
                 user32.ReleaseCapture()
+                was_moved = self._drag_moved
                 self._drag_origin = None
-                if self._drag_moved:
-                    self._drag_moved = False
+                self._drag_moved = False
+                if was_moved:
+                    # 拖到屏幕外找不回来就糟了，夹回工作区
+                    if self._last_img is not None:
+                        w, h = self._last_img.size
+                        nx, ny = self._clamp_to_work_area(self._x, self._y, w, h)
+                        if (nx, ny) != (self._x, self._y):
+                            self._move_to(nx, ny)
                     return 0          # 拖动结束，不算点击
             x = ctypes.c_short(lparam & 0xFFFF).value / self.scale
             y = ctypes.c_short((lparam >> 16) & 0xFFFF).value / self.scale
-            import os as _os
-            if _os.environ.get("TR_DEBUG"):
-                print(f"[lbuttonup] raw=({lparam & 0xFFFF},{(lparam>>16)&0xFFFF}) "
-                      f"logical=({x:.1f},{y:.1f})", flush=True)
             if self.on_click:
                 self.on_click(x, y)
             return 0
@@ -503,6 +520,18 @@ class LayeredWindow:
     def repaint(self):
         if self.hwnd and self.visible:
             self.present(self.render(), self._x, self._y)
+
+    def _move_to(self, x: int, y: int):
+        """
+        拖动时移动窗口：用 SetWindowPos 而不是重新 UpdateLayeredWindow。
+        UpdateLayeredWindow 每帧都要重新上传整张位图（这里 904×592×4 ≈ 2.1MB），
+        拖动时会明显滞后；SetWindowPos 只是告诉 DWM 挪位置，内容跟着走，开销极小。
+        """
+        self._x, self._y = int(x), int(y)
+        if self.hwnd:
+            user32.SetWindowPos(self.hwnd, None, self._x, self._y, 0, 0,
+                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                                | SWP_NOREDRAW)
 
     _x: int = 0
     _y: int = 0

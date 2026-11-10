@@ -38,7 +38,9 @@ ID_OPEN_SETTINGS_WIN = 1006
 
 class Panel(W.LayeredWindow):
     def __init__(self, app: "App"):
-        super().__init__(ui.CANVAS_W, ui.CANVAS_H, app.scale)
+        suffix = "-dev" if os.environ.get("TR_DEV") else ""
+        super().__init__(ui.CANVAS_W, ui.CANVAS_H, app.scale,
+                         title=f"TouchpadRescue{suffix}")
         self.app = app
         self.on_click = self._click
         self.on_message = self._msg
@@ -541,7 +543,11 @@ def _single_instance() -> bool:
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateMutexW.restype = wintypes.HANDLE
     kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
-    h = kernel32.CreateMutexW(None, False, "Local\\TouchpadRescue-SingleInstance")
+    name = "Local\\TouchpadRescue-SingleInstance"
+    if os.environ.get("TR_DEV"):
+        # 调试实例用独立互斥量，方便和正在运行的正式实例共存
+        name += "-dev"
+    h = kernel32.CreateMutexW(None, False, name)
     if not h:
         return True
     if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
