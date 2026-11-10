@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# PyInstaller 构建产物（exe 通过 GitHub Release 分发，不入库）
+build/
+dist/
+*.spec
+
+# 探针与测试产物
+probe/*.png
+probe/*.log
+probe/*.shot
+
+# 编辑器/系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.swp
+
+# 本地配置
+config.local.json
