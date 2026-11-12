@@ -6,7 +6,10 @@
 
 ![界面预览](docs/screenshot-light-dark.png)
 
-> 版本 v1.0.0 · Windows 10 1809+ / Windows 11 · 需要管理员权限
+> 版本 v1.0.1 · Windows 10 1809+ / Windows 11 · 需要管理员权限
+
+写这个工具的完整过程在博客上：**[红米笔记本触摸板快捷键：REDMI Book Pro 14 2026 没有，我用 Ctrl+Alt+P 补了一个](https://xiaozou123.cn/redmibook-touchpad-shortcut/)** —
+为什么改注册表没用、设备节点怎么重载、踩了哪些坑，都在那里。
 
 ---
 
@@ -202,3 +205,12 @@ python -m PyInstaller --onefile --windowed --uac-admin ^
   --name TouchpadRescue --icon ..\assets\app.ico ^
   --distpath ..\dist --workpath ..\build --specpath ..\build tp_app.py
 ```
+
+---
+
+## 9. 版本记录
+
+| 版本 | 变更 |
+|---|---|
+| v1.0.1 | 修掉拖动面板时的剧烈抖动：改用屏幕绝对坐标算位移，拖动只走 `SetWindowPos` 不再重传位图，拖动期间不再响应 hover 重绘 |
+| v1.0.0 | 首个可用版本 |
