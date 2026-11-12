@@ -4,7 +4,7 @@
 
 解决的问题只有一个：**触摸板在系统设置里被关掉、手边又没有鼠标时，能用键盘把触摸板救回来。**
 
-![界面预览](docs/screenshot-light-dark.png)
+![界面预览：左边浅色主题显示触摸板已关闭，右边深色主题显示已开启](docs/panel-light-dark.webp)
 
 > 版本 v1.0.1 · Windows 10 1809+ / Windows 11 · 需要管理员权限
 
